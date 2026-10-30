@@ -32,8 +32,8 @@
   .status i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--mute);margin-right:7px;vertical-align:1px}
   .status.live i{background:var(--red)}
   .stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;position:relative}
-  .frame{position:relative;height:100%;max-width:100%;aspect-ratio:var(--ar,16/9);border-radius:18px;overflow:hidden;background:var(--stage)}
-  canvas#cv{display:block;width:100%;height:100%}
+  .frame{position:relative;width:100%;height:100%;flex:none;border-radius:18px;overflow:hidden;background:var(--stage)}
+  canvas#cv{display:block;width:100%;height:100%;object-fit:contain}
   .hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--mute);text-align:center;padding:20px}
   .flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .35s}
   .flash.on{opacity:.85;transition:none}
@@ -113,7 +113,7 @@
   <div class="bar"><nav id="nav" aria-label="Filters"></nav></div>
   <div class="bar">
     <nav id="lens" aria-label="Camera"></nav>
-    <span class="sep"></span>
+    <span class="sep" id="lensSep"></span>
     <button class="chip" id="tone-bw" aria-pressed="true">B&amp;W</button>
     <button class="chip" id="tone-color" aria-pressed="false">Color</button>
     <span class="sep"></span>
@@ -677,8 +677,16 @@ function sizeOut(){
   let w=W,h=H;
   if(S.lens==="booth"){if(boothComposed()){w=1200;h=1500}else{w=BOOTH.W;h=BOOTH.H}} else if(S.lens==="pixel"){w=900;h=1000}
   if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h}
-  $("frame").style.setProperty("--ar",`${w}/${h}`);
+  fitFrame();
 }
+/* size the frame to the largest box with the output's exact aspect ratio, so nothing gets squashed */
+function fitFrame(){
+  const st=document.querySelector(".stage"), fr=$("frame"), r=st.getBoundingClientRect(); if(!r.width||!r.height) return;
+  const k=Math.min(r.width/cv.width,r.height/cv.height);
+  fr.style.width=Math.floor(cv.width*k)+"px"; fr.style.height=Math.floor(cv.height*k)+"px";
+}
+addEventListener("resize",()=>fitFrame());
+if(window.ResizeObserver) new ResizeObserver(()=>fitFrame()).observe(document.querySelector(".stage"));
 const today=(()=>{const d=new Date();return `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,"0")}.${String(d.getDate()).padStart(2,"0")}`})();
 
 /* Photobooth — black & white retro strip of four */
@@ -926,6 +934,7 @@ function detect(t){
 function frame(t){
   requestAnimationFrame(frame);
   if(vid.readyState<2) return;
+  if(vid.videoWidth&&(vid.videoWidth!==W||vid.videoHeight!==H)){W=vid.videoWidth;H=vid.videoHeight;for(const c of [base,scene]){c.width=W;c.height=H}FACES.length=0;P=null;sizeOut()}
   const dt=Math.min(.1,(t-(prevT||t))/1000); prevT=t;
   if(vid.currentTime!==lastVT){lastVT=vid.currentTime;detect(t)}
   ACTIVE=FACES.filter(fc=>t-fc.seen<400); const has=ACTIVE.length>0; let prim=null;
@@ -952,7 +961,7 @@ function frame(t){
   else if(S.lens==="locked") lensLocked(t,has,dt);
   else if(S.lens==="pixel") lensPixel(has);
   else out.drawImage(scene,0,0);
-  { const lbl=$("shot").textContent, sl=$("shutterLabel"), want=lbl==="Capture"?"":lbl; if(sl.textContent!==want) sl.textContent=want; }
+  { const lbl=$("shot").textContent, sl=$("shutterLabel"), want=lbl==="Capture"?"":lbl==="Save strip"?"Save":lbl.startsWith("Shooting")?"…":lbl.replace("Shoot ",""); if(sl.textContent!==want) sl.textContent=want; }
   let st;
   if(!models.face) st="Loading face tracking";
   else if(needsSeg()&&!models.seg) st="Loading body tracking";
@@ -974,7 +983,7 @@ function loadSeg(){if(loading.seg)return;loading.seg=true;make(ImageSegmenter,{b
 async function openCamera(facing){
   if(vid.srcObject) vid.srcObject.getTracks().forEach(tr=>tr.stop());
   const portrait=innerHeight>innerWidth;
-  const size=MOBILE?(portrait?{width:{ideal:720},height:{ideal:960}}:{width:{ideal:960},height:{ideal:720}}):{width:{ideal:1280},height:{ideal:720}};
+  const size=MOBILE?(portrait?{width:{ideal:720},height:{ideal:960},aspectRatio:{ideal:3/4}}:{width:{ideal:960},height:{ideal:720},aspectRatio:{ideal:4/3}}):{width:{ideal:1280},height:{ideal:720}};
   const stream=await navigator.mediaDevices.getUserMedia({video:{...size,facingMode:facing},audio:false});
   vid.srcObject=stream; await vid.play();
   FACING=facing; MIR=facing==="user";
@@ -991,6 +1000,7 @@ async function start(){
     if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia) throw new Error("insecure");
     await openCamera("user");
     hint.hidden=true; $("shot").disabled=false; $("shutter").disabled=false;
+    if(MOBILE){$("lens").hidden=true;$("lensSep").hidden=true;pickLens("booth")}
     navigator.mediaDevices.enumerateDevices().then(ds=>{if(ds.filter(d=>d.kind==="videoinput").length>1)$("flipBtn").hidden=false}).catch(()=>{});
     Promise.all(['700 40px "Courier Prime"','400 40px "Courier Prime"','700 40px Fredoka','600 40px Fredoka','40px Pacifico'].map(f=>document.fonts.load(f))).then(()=>{fontsReady=true;PIX.body=null}).catch(()=>{});
     requestAnimationFrame(frame);
